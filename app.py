@@ -64,45 +64,25 @@ for tab, date_str in tab_map.items():
         show_matches(date_str)
 
 # --- Admin Section ---
+# --- Admin Section (DEBUG MODE) ---
 with st.expander("⚙️ Admin: Force Sync All Results"):
-    if st.button("Force Sync All Past Matches"):
+    if st.button("DEBUG: Fetch and Show Raw API Data"):
         headers = {'X-Auth-Token': api_key}
         # Fetching the data
-        res = requests.get("https://api.football-data.org/v4/competitions/WC/matches", headers=headers).json()
+        response = requests.get("https://api.football-data.org/v4/competitions/WC/matches", headers=headers).json()
         
-        with st.spinner("Calculating scores..."):
-            actual_results_found = {} # Debugging: store results we find
+        # Display the first 3 matches to see its structure
+        if 'matches' in response:
+            st.write("--- RAW DATA FROM API (First 3 matches) ---")
+            st.json(response['matches'][:3]) 
             
-            for m in res.get('matches', []):
-                # We check for FINISHED, or status that implies the match is done
+            # Now perform the update as before
+            for m in response['matches']:
+                # Print status so we know if it's FINISHED or TIMED
+                st.write(f"Match {m['id']} Status: {m['status']}")
+                
                 if m['status'] == 'FINISHED':
-                    score = m['score']['fullTime']
-                    home = score['home']
-                    away = score['away']
-                    
-                    if home is not None and away is not None:
-                        if home > away: result = f"{m['homeTeam']['name']} Win"
-                        elif away > home: result = f"{m['awayTeam']['name']} Win"
-                        else: result = "Draw"
-                        
-                        actual_results_found[m['id']] = result
-                        supabase.table('matches').update({"actual_result": result}).eq("match_id", m['id']).execute()
-            
-            # Display what we found for debugging
-            st.write("Results found in API:", actual_results_found)
-            
-            # Now calculate scores
-            all_preds = supabase.table('predictions').select('*').execute().data
-            
-            scores = {"Pavan": 0, "Sanki": 0, "Karthik": 0}
-            for p in all_preds:
-                m_id = p['match_id']
-                if m_id in actual_results_found and actual_results_found[m_id] == p['predicted_result']:
-                    scores[p['user_name']] += 1
-            
-            # Update scores
-            for user, score in scores.items():
-                supabase.table('users').update({"total_score": score}).eq("name", user).execute()
-        
-        st.success("✅ Sync Attempt Complete!")
-        st.rerun()
+                    score = m.get('score', {}).get('fullTime')
+                    st.write(f"Processing {m['homeTeam']['name']} vs {m['awayTeam']['name']}: {score}")
+        else:
+            st.error("No matches found in API response!")
