@@ -14,6 +14,15 @@ IST = pytz.timezone('Asia/Kolkata')
 st.set_page_config(page_title="WC 2026 Prediction League", page_icon="⚽", layout="centered")
 st.title("🏆 WC 2026 Prediction League")
 
+# --- Dedicated Scoreboard UI ---
+st.header("📊 Current Standings")
+# Fetch updated scores from Supabase
+users_data = supabase.table('users').select('name, total_score').execute().data
+# Display as a clean table
+if users_data:
+    st.table(users_data)
+st.divider()
+
 # --- Tabs Implementation ---
 tab1, tab2, tab3 = st.tabs(["2026-06-12", "2026-06-13", "2026-06-14"])
 tab_map = {tab1: "2026-06-12", tab2: "2026-06-13", tab3: "2026-06-14"}
