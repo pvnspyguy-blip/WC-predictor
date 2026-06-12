@@ -78,64 +78,85 @@ else:
 st.divider()
 
 # --- Admin Auto-Referee ---
-# --- Admin Auto-Referee ---
 with st.expander("⚙️ Admin: Auto-Sync Matches & Scores"):
     st.write("Click this once a day to pull new matches and update the leaderboard.")
     if st.button("Sync API Now"):
         headers = {'x-apisports-key': api_key}
         
-        # 1. Fetch upcoming World Cup matches (League 1, Season 2026)
-        st.write("Fetching upcoming World Cup matches...")
-        up_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&next=5"
-        up_res = requests.get(up_url, headers=headers).json()
-        
-        if not up_res.get('response'):
-            st.error("API Error: No matches found! Here is the raw data:")
-            st.json(up_res)
-        else:
-            for f in up_res['response']:
-                supabase.table('matches').upsert({
-                    "match_id": f['fixture']['id'],
-                    "team1": f['teams']['home']['name'],
-                    "team2": f['teams']['away']['name'],
-                    "kickoff_time": f['fixture']['date']
-                }).execute()
+        # Using a spinner keeps the UI active so it doesn't go blank
+        with st.spinner("Connecting to football database..."):
+            try:
+                # 1. Fetch upcoming World Cup matches (With a 10-second safety timeout)
+                st.write("🔄 Fetching upcoming World Cup matches...")
+                up_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&next=5"
+                up_res = requests.get(up_url, headers=headers, timeout=10).json()
                 
-        # 2. Fetch recent World Cup results and calculate scores
-        st.write("Checking final scores...")
-        past_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&last=5"
-        past_res = requests.get(past_url, headers=headers).json()
-        
-        if past_res.get('response'):
-            for f in past_res['response']:
-                if f['fixture']['status']['short'] in ['FT', 'AET', 'PEN']:
-                    m_id = f['fixture']['id']
-                    t1 = f['teams']['home']['name']
-                    t2 = f['teams']['away']['name']
-                    g1 = f['goals']['home']
-                    g2 = f['goals']['away']
-                    
-                    if g1 > g2: result = f"{t1} Win"
-                    elif g2 > g1: result = f"{t2} Win"
-                    else: result = "Draw"
-                    
-                    supabase.table('matches').update({"actual_result": result}).eq("match_id", m_id).execute()
+                if not up_res.get('response'):
+                    st.error("API Error: No matches found! Here is the raw data:")
+                    st.json(up_res)
+                else:
+                    for f in up_res['response']:
+                        supabase.table('matches').upsert({
+                            "match_id": f['fixture']['id'],
+                            "team1": f['teams']['home']['name'],
+                            "team2": f['teams']['away']['name'],
+                            "kickoff_time": f['fixture']['date']
+                        }).execute()
+                        
+                # 2. Fetch recent World Cup results (With a 10-second safety timeout)
+                st.write("🔄 Checking final scores...")
+                past_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&last=5"
+                past_res = requests.get(past_url, headers=headers, timeout=10).json()
+                
+                if past_res.get('response'):
+                    for f in past_res['response']:
+                        if f['fixture']['status']['short'] in ['FT', 'AET', 'PEN']:
+                            m_id = f['fixture']['id']
+                            t1 = f['teams']['home']['name']
+                            t2 = f['teams']['away']['name']
+                            g1 = f['goals']['home']
+                            g2 = f['goals']['away']
                             
-        # 3. Safe Point Recalculation
-        st.write("Updating Leaderboard...")
-        all_preds = supabase.table('predictions').select('*').execute().data
-        all_matches = supabase.table('matches').select('*').execute().data
-        
-        results_dict = {m['match_id']: m['actual_result'] for m in all_matches if m.get('actual_result')}
-        
-        scores = {"Pavan": 0, "Sanki": 0, "Karthik": 0}
-        for p in all_preds:
-            m_id = p['match_id']
-            if m_id in results_dict and results_dict[m_id] == p['predicted_result']:
-                scores[p['user_name']] += 1
+                            if g1 > g2: result = f"{t1} Win"
+                            elif g2 > g1: result = f"{t2} Win"
+                            else: result = "Draw"
+                            
+                            supabase.table('matches').update({"actual_result": result}).eq("match_id", m_id).execute()
+                                    
+                # 3. Safe Point Recalculation
+                st.write("🔄 Updating Leaderboard...")
+                all_preds = supabase.table('predictions').select('*').execute().data
+                all_matches = supabase.table('matches').select('*').execute().data
                 
-        for user, score in scores.items():
-            supabase.table('users').update({"total_score": score}).eq("name", user).execute()
-            
-        st.success("✅ Sync Complete! Refreshing...")
+                results_dict = {m['match_id']: m['actual_result'] for m in all_matches if m.get('actual_result')}
+                
+                scores = {"Pavan": 0, "Sanki": 0, "Karthik": 0}
+                for p in all_preds:
+                    m_id = p['match_id']
+                    if m_id in results_dict and results_dict[m_id] == p['predicted_result']:
+                        scores[p['user_name']] += 1
+                        
+                for user, score in scores.items():
+                    supabase.table('users').update({"total_score": score}).eq("name", user).execute()
+                    
+                st.success("✅ Sync Complete!")
+                st.rerun()
+
+            except requests.exceptions.Timeout:
+                st.error("⏳ Connection timed out! The API server is taking too long to respond. Please try again in a moment.")
+            except Exception as e:
+                st.error(f"❌ An error occurred: {e}")
+
+    st.divider()
+    st.write("🛠️ **Emergency Override**")
+    if st.button("Load Dummy Match"):
+        test_id = 999999
+        future_time = (datetime.now(tz) + timedelta(hours=5)).isoformat()
+        supabase.table('matches').upsert({
+            "match_id": test_id,
+            "team1": "Brazil",
+            "team2": "Argentina",
+            "kickoff_time": future_time
+        }).execute()
+        st.success("Test match loaded! Refreshing...")
         st.rerun()
