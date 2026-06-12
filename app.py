@@ -78,18 +78,19 @@ else:
 st.divider()
 
 # --- Admin Auto-Referee ---
+# --- Admin Auto-Referee ---
 with st.expander("⚙️ Admin: Auto-Sync Matches & Scores"):
     st.write("Click this once a day to pull new matches and update the leaderboard.")
     if st.button("Sync API Now"):
         headers = {'x-apisports-key': api_key}
         
-        # 1. Fetch upcoming matches
-        st.write("Fetching upcoming matches...")
+        # 1. Fetch upcoming World Cup matches (League 1, Season 2026)
+        st.write("Fetching upcoming World Cup matches...")
         up_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&next=5"
         up_res = requests.get(up_url, headers=headers).json()
         
         if not up_res.get('response'):
-            st.error("API Error: No matches found! Here is the raw data from the API:")
+            st.error("API Error: No matches found! Here is the raw data:")
             st.json(up_res)
         else:
             for f in up_res['response']:
@@ -100,7 +101,7 @@ with st.expander("⚙️ Admin: Auto-Sync Matches & Scores"):
                     "kickoff_time": f['fixture']['date']
                 }).execute()
                 
-        # 2. Fetch recent results and calculate scores
+        # 2. Fetch recent World Cup results and calculate scores
         st.write("Checking final scores...")
         past_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&last=5"
         past_res = requests.get(past_url, headers=headers).json()
@@ -137,18 +138,4 @@ with st.expander("⚙️ Admin: Auto-Sync Matches & Scores"):
             supabase.table('users').update({"total_score": score}).eq("name", user).execute()
             
         st.success("✅ Sync Complete! Refreshing...")
-        st.rerun()
-
-    st.divider()
-    st.write("🛠️ **Emergency Override**")
-    if st.button("Load Dummy Match"):
-        test_id = 999999
-        future_time = (datetime.now(pytz.utc) + timedelta(hours=5)).isoformat()
-        supabase.table('matches').upsert({
-            "match_id": test_id,
-            "team1": "Brazil",
-            "team2": "Argentina",
-            "kickoff_time": future_time
-        }).execute()
-        st.success("Test match loaded! Refreshing...")
         st.rerun()
