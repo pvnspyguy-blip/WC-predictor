@@ -7,13 +7,14 @@ import requests
 # --- Connect to Database ---
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
-api_key = st.secrets["API_SPORTS_KEY"]
+# Note: Ensure this is your NEW API key from football-data.org
+api_key = st.secrets["API_SPORTS_KEY"] 
 supabase: Client = create_client(url, key)
 
 # --- Page Setup ---
 st.set_page_config(page_title="WC 2026 Predictor", page_icon="⚽", layout="centered")
 st.title("🏆 WC 2026 Prediction League")
-st.write("Welcome Pavan, Sanki, and Karthik! Lock in your picks.")
+st.write("Welcome Pavan, Sanki, and Karthik! The tournament is live.")
 
 # --- Leaderboard ---
 st.header("👑 Leaderboard")
@@ -24,12 +25,9 @@ cols = st.columns(3)
 for i, user in enumerate(users):
     if i < 3:
         with cols[i]:
-            if i == 0:
-                st.success(f"🥇 {user['name']}\n\n**{user['total_score']} pts**")
-            elif i == 1:
-                st.warning(f"🥈 {user['name']}\n\n**{user['total_score']} pts**")
-            else:
-                st.error(f"🥉 {user['name']}\n\n**{user['total_score']} pts**")
+            if i == 0: st.success(f"🥇 {user['name']}\n\n**{user['total_score']} pts**")
+            elif i == 1: st.warning(f"🥈 {user['name']}\n\n**{user['total_score']} pts**")
+            else: st.error(f"🥉 {user['name']}\n\n**{user['total_score']} pts**")
 
 st.divider()
 
@@ -48,116 +46,41 @@ if not matches:
 else:
     for match in matches:
         st.subheader(f"⚽ {match['team1']} vs {match['team2']}")
-        
-        try:
-            kickoff = datetime.fromisoformat(match['kickoff_time']).astimezone(tz)
-            time_str = kickoff.strftime('%b %d, %I:%M %p')
-        except:
-            kickoff = now + timedelta(days=1)
-            time_str = "Unknown"
-            
-        st.write(f"**Kickoff:** {time_str}")
+        st.write(f"**Kickoff:** {match['kickoff_time']}")
         
         if match.get('actual_result'):
             st.info(f"**Final Result:** {match['actual_result']}")
-        elif now >= (kickoff - timedelta(minutes=5)):
-            st.warning("🔒 Locked! Match starts in less than 5 mins (or has already started).")
         else:
             pred = st.radio("Your pick:", [f"{match['team1']} Win", "Draw", f"{match['team2']} Win"], key=f"radio_{match['match_id']}")
             if st.button("Lock Prediction", key=f"btn_{match['match_id']}"):
-                try:
-                    supabase.table('predictions').upsert({
-                        "user_name": current_user,
-                        "match_id": match['match_id'],
-                        "predicted_result": pred
-                    }).execute()
-                    st.success(f"Prediction locked for {current_user}!")
-                except Exception as e:
-                    st.error("You already predicted this match!")
-
-st.divider()
+                supabase.table('predictions').upsert({
+                    "user_name": current_user, "match_id": match['match_id'], "predicted_result": pred
+                }).execute()
+                st.success(f"Prediction locked for {current_user}!")
 
 # --- Admin Auto-Referee ---
 with st.expander("⚙️ Admin: Auto-Sync Matches & Scores"):
-    st.write("Click this once a day to pull new matches and update the leaderboard.")
     if st.button("Sync API Now"):
-        headers = {'x-apisports-key': api_key}
+        # Football-Data.org specific header
+        headers = {'X-Auth-Token': api_key}
         
-        # Using a spinner keeps the UI active so it doesn't go blank
         with st.spinner("Connecting to football database..."):
             try:
-                # 1. Fetch upcoming World Cup matches (With a 10-second safety timeout)
-                st.write("🔄 Fetching today's World Cup matches...")
-                today_str = datetime.now(tz).strftime('%Y-%m-%d')
-                up_url = f"https://v3.football.api-sports.io/fixtures?league=1&season=2026&date={today_str}"
-                up_res = requests.get(up_url, headers=headers, timeout=10).json()
+                # WC is the league code for World Cup
+                url = "https://api.football-data.org/v4/competitions/WC/matches"
+                response = requests.get(url, headers=headers, timeout=10).json()
                 
-                if not up_res.get('response'):
-                    st.error("API Error: No matches found! Here is the raw data:")
-                    st.json(up_res)
-                else:
-                    for f in up_res['response']:
+                if 'matches' in response:
+                    for m in response['matches'][:10]:
                         supabase.table('matches').upsert({
-                            "match_id": f['fixture']['id'],
-                            "team1": f['teams']['home']['name'],
-                            "team2": f['teams']['away']['name'],
-                            "kickoff_time": f['fixture']['date']
+                            "match_id": m['id'],
+                            "team1": m['homeTeam']['name'],
+                            "team2": m['awayTeam']['name'],
+                            "kickoff_time": m['utcDate']
                         }).execute()
-                        
-                # 2. Fetch recent World Cup results (With a 10-second safety timeout)
-                st.write("🔄 Checking final scores...")
-                past_url = f"https://v3.football.api-sports.io/fixtures?league=1&season=2026&date={today_str}"
-                past_res = requests.get(past_url, headers=headers, timeout=10).json()
-                
-                if past_res.get('response'):
-                    for f in past_res['response']:
-                        if f['fixture']['status']['short'] in ['FT', 'AET', 'PEN']:
-                            m_id = f['fixture']['id']
-                            t1 = f['teams']['home']['name']
-                            t2 = f['teams']['away']['name']
-                            g1 = f['goals']['home']
-                            g2 = f['goals']['away']
-                            
-                            if g1 > g2: result = f"{t1} Win"
-                            elif g2 > g1: result = f"{t2} Win"
-                            else: result = "Draw"
-                            
-                            supabase.table('matches').update({"actual_result": result}).eq("match_id", m_id).execute()
-                                    
-                # 3. Safe Point Recalculation
-                st.write("🔄 Updating Leaderboard...")
-                all_preds = supabase.table('predictions').select('*').execute().data
-                all_matches = supabase.table('matches').select('*').execute().data
-                
-                results_dict = {m['match_id']: m['actual_result'] for m in all_matches if m.get('actual_result')}
-                
-                scores = {"Pavan": 0, "Sanki": 0, "Karthik": 0}
-                for p in all_preds:
-                    m_id = p['match_id']
-                    if m_id in results_dict and results_dict[m_id] == p['predicted_result']:
-                        scores[p['user_name']] += 1
-                        
-                for user, score in scores.items():
-                    supabase.table('users').update({"total_score": score}).eq("name", user).execute()
-                    
-                st.success("✅ Sync Complete!")
-                st.rerun()
-
-            except requests.exceptions.Timeout:
-                st.error("⏳ Connection timed out! The API server is taking too long to respond. Please try again in a moment.")
+                    st.success("✅ Sync Complete!")
+                    st.rerun()
+                else:
+                    st.error("No matches found. Check API key status.")
             except Exception as e:
-                st.error(f"❌ An error occurred: {e}")
-
-    st.divider()
-    st.write("🛠️ **Emergency Override**")
-    if st.button("Load Dummy Match"):
-        test_id = 999999
-        future_time = (datetime.now(tz) + timedelta(hours=5)).isoformat()
-        supabase.table('matches').upsert({
-            "match_id": test_id,
-            "team1": "Brazil",
-            "team2": "Argentina",
-            "kickoff_time": future_time
-        }).execute()
-        st.success("Test match loaded! Refreshing...")
-        st.rerun()
+                st.error(f"Error: {e}")
