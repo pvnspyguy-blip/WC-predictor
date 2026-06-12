@@ -1,40 +1,41 @@
 import streamlit as st
 from supabase import create_client, Client
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 import requests
 
-# --- Config & Connection ---
+# --- Connect to Database ---
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
-api_key = st.secrets["API_SPORTS_KEY"] # Ensure this is your football-data.org token
+api_key = st.secrets["API_SPORTS_KEY"] 
 supabase: Client = create_client(url, key)
 IST = pytz.timezone('Asia/Kolkata')
 
 st.set_page_config(page_title="WC 2026 Prediction League", page_icon="⚽", layout="centered")
 st.title("🏆 WC 2026 Prediction League")
 
-# --- Date Tabs ---
-date_list = ["2026-06-12", "2026-06-13", "2026-06-14"]
-tab1, tab2, tab3 = st.tabs(date_list)
-selected_date = date_list[0]
-if tab2.open: selected_date = date_list[1]
-elif tab3.open: selected_date = date_list[2]
+# --- Tabs Implementation ---
+# Using the 'with' block ensures content renders ONLY in the selected tab
+tab1, tab2, tab3 = st.tabs(["2026-06-12", "2026-06-13", "2026-06-14"])
 
-# --- Fetch Matches (IST Filtered) ---
+# Create a mapping for easy processing
+tab_map = {tab1: "2026-06-12", tab2: "2026-06-13", tab3: "2026-06-14"}
+
 current_user = st.selectbox("Who is logging a prediction?", ["Pavan", "Sanki", "Karthik"])
 
-# Query for the selected date range
-matches_res = supabase.table('matches').select('*') \
-    .gte('kickoff_time', f"{selected_date}T00:00:00+05:30") \
-    .lt('kickoff_time', f"{selected_date}T23:59:59+05:30") \
-    .order('kickoff_time', desc=False).execute()
+def show_matches(selected_date):
+    """Helper function to fetch and display matches for a specific date."""
+    matches_res = supabase.table('matches').select('*') \
+        .gte('kickoff_time', f"{selected_date}T00:00:00+05:30") \
+        .lt('kickoff_time', f"{selected_date}T23:59:59+05:30") \
+        .order('kickoff_time', desc=False).execute()
+    
+    matches = matches_res.data
+    
+    if not matches:
+        st.info(f"No matches scheduled for {selected_date} (IST).")
+        return
 
-matches = matches_res.data
-
-if not matches:
-    st.info(f"No matches scheduled for {selected_date} (IST).")
-else:
     for match in matches:
         st.subheader(f"⚽ {match['team1']} vs {match['team2']}")
         
@@ -43,7 +44,7 @@ else:
         ist_time = utc_time.astimezone(IST)
         st.write(f"**Kickoff:** {ist_time.strftime('%I:%M %p')} IST")
         
-        # Check for existing prediction
+        # Persistence Logic
         existing = supabase.table('predictions').select('predicted_result') \
             .eq('user_name', current_user).eq('match_id', match['match_id']).execute().data
         
@@ -62,6 +63,11 @@ else:
                     "predicted_result": choice
                 }).execute()
                 st.rerun()
+
+# --- Render Tab Content ---
+for tab, date_str in tab_map.items():
+    with tab:
+        show_matches(date_str)
 
 # --- Admin Section ---
 with st.expander("⚙️ Admin: Sync"):
