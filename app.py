@@ -4,7 +4,7 @@ from datetime import datetime
 import pytz
 import requests
 
-# --- Connect to Database ---
+# --- Config & Connection ---
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 api_key = st.secrets["API_SPORTS_KEY"] 
@@ -15,16 +15,12 @@ st.set_page_config(page_title="WC 2026 Prediction League", page_icon="⚽", layo
 st.title("🏆 WC 2026 Prediction League")
 
 # --- Tabs Implementation ---
-# Using the 'with' block ensures content renders ONLY in the selected tab
 tab1, tab2, tab3 = st.tabs(["2026-06-12", "2026-06-13", "2026-06-14"])
-
-# Create a mapping for easy processing
 tab_map = {tab1: "2026-06-12", tab2: "2026-06-13", tab3: "2026-06-14"}
 
 current_user = st.selectbox("Who is logging a prediction?", ["Pavan", "Sanki", "Karthik"])
 
 def show_matches(selected_date):
-    """Helper function to fetch and display matches for a specific date."""
     matches_res = supabase.table('matches').select('*') \
         .gte('kickoff_time', f"{selected_date}T00:00:00+05:30") \
         .lt('kickoff_time', f"{selected_date}T23:59:59+05:30") \
@@ -38,13 +34,9 @@ def show_matches(selected_date):
 
     for match in matches:
         st.subheader(f"⚽ {match['team1']} vs {match['team2']}")
-        
-        # Display Time in IST
         utc_time = datetime.fromisoformat(match['kickoff_time'].replace('Z', '+00:00'))
-        ist_time = utc_time.astimezone(IST)
-        st.write(f"**Kickoff:** {ist_time.strftime('%I:%M %p')} IST")
+        st.write(f"**Kickoff:** {utc_time.astimezone(IST).strftime('%I:%M %p')} IST")
         
-        # Persistence Logic
         existing = supabase.table('predictions').select('predicted_result') \
             .eq('user_name', current_user).eq('match_id', match['match_id']).execute().data
         
@@ -53,32 +45,40 @@ def show_matches(selected_date):
         if locked_pick:
             st.success(f"✅ You locked: {locked_pick}")
         else:
-            options = [f"{match['team1']} Win", "Draw", f"{match['team2']} Win"]
-            choice = st.radio("Pick:", options, key=f"radio_{match['match_id']}")
-            
+            choice = st.radio("Pick:", [f"{match['team1']} Win", "Draw", f"{match['team2']} Win"], key=f"radio_{match['match_id']}")
             if st.button("Lock Prediction", key=f"btn_{match['match_id']}"):
-                supabase.table('predictions').upsert({
-                    "user_name": current_user,
-                    "match_id": match['match_id'],
-                    "predicted_result": choice
-                }).execute()
+                supabase.table('predictions').upsert({"user_name": current_user, "match_id": match['match_id'], "predicted_result": choice}).execute()
                 st.rerun()
 
-# --- Render Tab Content ---
 for tab, date_str in tab_map.items():
     with tab:
         show_matches(date_str)
 
 # --- Admin Section ---
-with st.expander("⚙️ Admin: Sync"):
-    if st.button("Sync API Now"):
+with st.expander("⚙️ Admin: Force Sync All Results"):
+    if st.button("Force Sync All Past Matches"):
         headers = {'X-Auth-Token': api_key}
-        url = "https://api.football-data.org/v4/competitions/WC/matches"
-        res = requests.get(url, headers=headers).json()
-        for m in res.get('matches', []):
-            supabase.table('matches').upsert({
-                "match_id": m['id'], "team1": m['homeTeam']['name'],
-                "team2": m['awayTeam']['name'], "kickoff_time": m['utcDate']
-            }).execute()
-        st.success("Sync Complete!")
+        res = requests.get("https://api.football-data.org/v4/competitions/WC/matches", headers=headers).json()
+        
+        with st.spinner("Calculating scores..."):
+            for m in res.get('matches', []):
+                if m['status'] == 'FINISHED':
+                    score = m['score']['fullTime']
+                    if score['home'] > score['away']: result = f"{m['homeTeam']['name']} Win"
+                    elif score['away'] > score['home']: result = f"{m['awayTeam']['name']} Win"
+                    else: result = "Draw"
+                    supabase.table('matches').update({"actual_result": result}).eq("match_id", m['id']).execute()
+            
+            all_preds = supabase.table('predictions').select('*').execute().data
+            all_matches = supabase.table('matches').select('match_id, actual_result').execute().data
+            results_dict = {m['match_id']: m['actual_result'] for m in all_matches if m.get('actual_result')}
+            
+            scores = {"Pavan": 0, "Sanki": 0, "Karthik": 0}
+            for p in all_preds:
+                if p['match_id'] in results_dict and results_dict[p['match_id']] == p['predicted_result']:
+                    scores[p['user_name']] += 1
+            for user, score in scores.items():
+                supabase.table('users').update({"total_score": score}).eq("name", user).execute()
+        
+        st.success("✅ Full Sync Complete!")
         st.rerun()
