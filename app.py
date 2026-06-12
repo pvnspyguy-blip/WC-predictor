@@ -64,25 +64,40 @@ for tab, date_str in tab_map.items():
         show_matches(date_str)
 
 # --- Admin Section ---
-# --- Admin Section (DEBUG MODE) ---
+# --- Admin Section (ROBUST SYNC) ---
 with st.expander("⚙️ Admin: Force Sync All Results"):
-    if st.button("DEBUG: Fetch and Show Raw API Data"):
+    if st.button("Force Sync All Past Matches"):
         headers = {'X-Auth-Token': api_key}
-        # Fetching the data
-        response = requests.get("https://api.football-data.org/v4/competitions/WC/matches", headers=headers).json()
+        res = requests.get("https://api.football-data.org/v4/competitions/WC/matches", headers=headers).json()
         
-        # Display the first 3 matches to see its structure
-        if 'matches' in response:
-            st.write("--- RAW DATA FROM API (First 3 matches) ---")
-            st.json(response['matches'][:3]) 
+        with st.spinner("Calculating scores..."):
+            actual_results_found = {}
             
-            # Now perform the update as before
-            for m in response['matches']:
-                # Print status so we know if it's FINISHED or TIMED
-                st.write(f"Match {m['id']} Status: {m['status']}")
+            for m in res.get('matches', []):
+                score = m.get('score', {}).get('fullTime')
+                home_score = score.get('home')
+                away_score = score.get('away')
                 
-                if m['status'] == 'FINISHED':
-                    score = m.get('score', {}).get('fullTime')
-                    st.write(f"Processing {m['homeTeam']['name']} vs {m['awayTeam']['name']}: {score}")
-        else:
-            st.error("No matches found in API response!")
+                # Logic: If we have scores, it's finished regardless of status label
+                if home_score is not None and away_score is not None:
+                    if home_score > away_score: result = f"{m['homeTeam']['name']} Win"
+                    elif away_score > home_score: result = f"{m['awayTeam']['name']} Win"
+                    else: result = "Draw"
+                    
+                    actual_results_found[m['id']] = result
+                    supabase.table('matches').update({"actual_result": result}).eq("match_id", m['id']).execute()
+            
+            # Now calculate scores
+            all_preds = supabase.table('predictions').select('*').execute().data
+            scores = {"Pavan": 0, "Sanki": 0, "Karthik": 0}
+            for p in all_preds:
+                m_id = p['match_id']
+                if m_id in actual_results_found and actual_results_found[m_id] == p['predicted_result']:
+                    scores[p['user_name']] += 1
+            
+            # Save to users table
+            for user, score in scores.items():
+                supabase.table('users').update({"total_score": score}).eq("name", user).execute()
+        
+        st.success(f"✅ Sync Complete! Updated {len(actual_results_found)} matches.")
+        st.rerun()
