@@ -87,8 +87,9 @@ with st.expander("⚙️ Admin: Auto-Sync Matches & Scores"):
         with st.spinner("Connecting to football database..."):
             try:
                 # 1. Fetch upcoming World Cup matches (With a 10-second safety timeout)
-                st.write("🔄 Fetching upcoming World Cup matches...")
-                up_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&next=5"
+                st.write("🔄 Fetching today's World Cup matches...")
+                today_str = datetime.now(tz).strftime('%Y-%m-%d')
+                up_url = f"https://v3.football.api-sports.io/fixtures?league=1&season=2026&date={today_str}"
                 up_res = requests.get(up_url, headers=headers, timeout=10).json()
                 
                 if not up_res.get('response'):
@@ -105,7 +106,7 @@ with st.expander("⚙️ Admin: Auto-Sync Matches & Scores"):
                         
                 # 2. Fetch recent World Cup results (With a 10-second safety timeout)
                 st.write("🔄 Checking final scores...")
-                past_url = "https://v3.football.api-sports.io/fixtures?league=1&season=2026&last=5"
+                past_url = f"https://v3.football.api-sports.io/fixtures?league=1&season=2026&date={today_str}"
                 past_res = requests.get(past_url, headers=headers, timeout=10).json()
                 
                 if past_res.get('response'):
